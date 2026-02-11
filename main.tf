@@ -1,107 +1,57 @@
-# VPC 
-resource "aws_vpc" "practice_vpc" {
-  cidr_block = "10.0.0.0/16"
+# ------------------------
+# VPC MODULE
+# ------------------------
+module "vpc" {
+  source = "./modules/vpc"
 
-  tags = {
-    Name = "practice_vpc"
-  }
-
+  vpc_name             = "bhushan-vpc"
+  vpc_cidr             = "10.0.0.0/16"
+  public_subnet_cidr_1 = "10.0.1.0/24"
+  public_subnet_cidr_2 = "10.0.2.0/24"
+  az_1                 = "us-east-1a"
+  az_2                 = "us-east-1b"
 }
 
-# SUBNET
-resource "aws_subnet" "sub" {
-  vpc_id                  = aws_vpc.practice_vpc.id
-  cidr_block              = "10.0.0.0/20"
-  availability_zone       = "us-east-1a"
-  map_public_ip_on_launch = true
-
-  tags = {
-    name = "public-sub"
-  }
+# ------------------------
+# SECURITY GROUP MODULE
+# ------------------------
+module "security_grp" {
+  source  = "./modules/security_grp"
+  vpc_id  = module.vpc.vpc_id
+  sg_name = "bhushan-sg"
 }
 
-# INTERNET GATEWAY
-resource "aws_internet_gateway" "igw" {
-  vpc_id = aws_vpc.practice_vpc.id
+# ------------------------
+# EC2 MODULE
+# ------------------------
+module "ec2" {
+  source = "./modules/ec2"
 
-  tags = {
-    name = "My-igw"
-  }
+  ami               = "ami-0c02fb55956c7d316"
+  instance_type     = "t2.micro"
+  subnet_id         = module.vpc.public_subnet_ids[0]
+  security_group_id = module.security_grp.sg_id
+  key_name          = "bhushan-key"
+  instance_name     = "bhushan-ec2"
 }
 
-# ROUTE-TABLE
-resource "aws_route_table" "rt_1" {
-  vpc_id = aws_vpc.practice_vpc.id
+# ------------------------
+# ALB MODULE
+# ------------------------
+module "alb" {
+  source = "./modules/alb"
 
-  tags = {
-    name = "rt-1"
-  }
+  alb_name          = "bhushan-alb"
+  subnet_ids        = module.vpc.public_subnet_ids # ✅ List
+  security_group_id = module.security_grp.sg_id
+  vpc_id            = module.vpc.vpc_id
 }
 
-# ROUTE
-resource "aws_route" "route" {
-  route_table_id         = aws_route_table.rt_1.id
-  destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.igw.id
-}
-
-# ROUTE-TABLE-ASSOCIATION 
-resource "aws_route_table_association" "rta" {
-  subnet_id      = aws_subnet.sub.id
-  route_table_id = aws_route_table.rt_1.id
-
-}
-
-# SECURITY-GROUP 
-resource "aws_security_group" "sg" {
-  name   = "traffic"
-  vpc_id = aws_vpc.practice_vpc.id
-
-  ingress {
-    description = "Allow SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "Allow HTTP"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-}
-
-# AWS-INSTANCE-EC2 (UBUNTU)
-resource "aws_instance" "ec2_instance" {
-  ami                    = "ami-0b6c6ebed2801a5cb"
-  instance_type          = "t3.micro"
-  key_name               = "terraform-key"
-  vpc_security_group_ids = [aws_security_group.sg.id]
-  subnet_id              = aws_subnet.sub.id
-  user_data              = <<-EOF
-          #!/bin/bash
-          sudo -i
-          apt update -y 
-          apt install apache2 -y 
-          systemctl start apache2
-          systemctl enable apache2
-          echo "Hello World! This side bhushan " > /var/www/html/index.html
-          EOF
-
-
-  tags = {
-    name = "BM-Brand"
-  }
-
+# ------------------------
+# Attach EC2 to Target Group
+# ------------------------
+resource "aws_lb_target_group_attachment" "ec2_attachment" {
+  target_group_arn = module.alb.target_group_arn
+  target_id        = module.ec2.instance_id
+  port             = 80
 }
